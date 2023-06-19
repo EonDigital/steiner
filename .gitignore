@@ -1,0 +1,7 @@
+# Ignore the build directory
+/build
+
+# Ignore common temporary files
+*~
+*.swp
+*.swo
