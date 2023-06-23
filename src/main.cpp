@@ -8,10 +8,12 @@
 std::list<uint32_t> found;
 
 enum {
-    PRINT_COMPARISONS = 1 << 0
+    PRINT_COMPARISONS = 1 << 0,
+    PRINT_ADVANCE_MASK = 1 << 1,
+    PRINT_NEXT_CANDIDATE = 1 << 2,
 };
 
-uint32_t print_flags = 0;
+uint32_t print_flags = PRINT_ADVANCE_MASK;
 
 uint32_t clz( uint32_t value ) {
     return __builtin_clz( value );
@@ -39,15 +41,6 @@ char to_char( uint32_t value ) {
     return 'A' + shift;
 }
 
-void print_group( uint32_t value ) {
-    while ( value ) {
-        uint32_t lowest = get_lsb( value );
-        printf("%c", to_char(lowest) );
-        value &= ~lowest;
-    }
-    printf( "\n" );
-}
-
 int count_non_zeros( uint32_t value ) {
     static uint32_t mask[] = {
         0x55555555,
@@ -63,6 +56,49 @@ int count_non_zeros( uint32_t value ) {
     }
     return value;
 }
+
+void print_group( uint32_t value ) {
+    while ( value ) {
+        uint32_t lowest = get_lsb( value );
+        printf("%c", to_char(lowest) );
+        value &= ~lowest;
+    }
+    printf( "\n" );
+}
+
+// This advances the "next candidate" past anything that clearly can't be valid.
+uint32_t get_next_candidate( uint32_t value, uint32_t consume_mask ) {
+    if ( print_flags & PRINT_NEXT_CANDIDATE ) {
+        printf( "Converting " ); print_group( value );
+    }
+    int bit_count = count_non_zeros( value );
+    consume_mask &= ~value;
+    uint32_t new_value_mask = 0;
+    for ( int i = 0; i < bit_count; ++i ) {
+        uint32_t next_bit = get_lsb( consume_mask );
+        new_value_mask |= next_bit;
+        consume_mask &= ~next_bit;
+        if ( next_bit == 0 ) {
+            new_value_mask = 0;
+            break;
+        }
+    }
+    if ( print_flags & PRINT_NEXT_CANDIDATE ) {
+        printf( "   to      " ); print_group( new_value_mask );
+    }
+    return new_value_mask;
+}
+
+uint32_t reset_consume_mask( uint32_t current_step, int v ) {
+    uint32_t low = get_msb( current_step ) << 1;
+    uint32_t high = (1 << v);
+    uint32_t consume_mask = 0;
+    if ( high > low ) {
+        consume_mask = high - low;
+    }
+    return consume_mask;
+}
+
 
 bool check_next_collides(
         const std::list<uint32_t> & found,
@@ -86,21 +122,28 @@ bool check_next_collides(
     return false;
 }
 
+/// @returns true when successful
 bool advance_mask( uint32_t & mask, uint32_t v ) {
     int number_of_bits = count_non_zeros( mask );
-    printf( "Advancing 0x%0X ", mask );
+    if ( print_flags & PRINT_ADVANCE_MASK ) {
+        printf( "Advancing 0x%0X ", mask );
+    }
     for ( int i = 0; i < number_of_bits; ++i ) {
         int msb = get_msb( mask );
-        uint32_t max_bit = 1 << ( v - 1 - i );
+        uint32_t max_bit = 1 << ( v  - i );
         mask ^= msb; // Delete the highest bit
         msb <<= 1;
         if ( msb < max_bit ) {
             mask |= ((2 << i) - 1) * msb;
-            printf( "to 0x%0X, msb: 0x%0X, max_bit: 0x%0X\n", mask, msb, max_bit );
+            if ( print_flags & PRINT_ADVANCE_MASK ) {
+                printf( "to 0x%0X, msb: 0x%0X, max_bit: 0x%0X\n", mask, msb, max_bit );
+            }
             return true;
         }
     }
-    printf( "Failed\n" );
+    if ( print_flags & PRINT_ADVANCE_MASK ) {
+        printf( "Failed\n" );
+    }
     return false;
 }
 
@@ -125,70 +168,50 @@ int main( int argc, char ** argv ) {
     uint32_t valid_mask = (1 << v) - 1;
     printf( "Using alphabet %c to %c, valid mask: 0x%0X\n", 'A', 'A' + v - 1, valid_mask);
 
-    // Initial field
-    uint32_t current = (1 << k) - 1;
-    found.push_back( current );
-    int steps = 1;
-
-    // We need to be at least this far away from the previous entry or we're
-    // not valid.
     int step_size = k - t + 1;
-    uint32_t step_mask = ( 1 << step_size ) - 1 << (t - 1);
+    int base_size = k - step_size;
+    int base_limit = v - step_size;
 
-    current ^= step_mask;
+    int steps = 0;
+    enum { step_limit = 25 };
 
-    int new_min = 0;
 
-    printf( "Step 1 size: %d, current: 0x%0X, new mask: 0x%0X\n", step_size, current, step_mask );
-    print_group( current | step_mask );
-
-    bool test2 = true; // True if we can advance our mask
-    // Construct the next field by advancing a step.
-    do {
-        for ( new_min = get_msb_shift( step_mask ) + 1;
-                new_min <= v - step_size;
-                new_min = get_msb_shift( step_mask ) + 1 ) {
+    bool base_test = true;
+    for ( uint32_t base_mask = ( 1 << base_size ) - 1;
+          base_test;
+          base_test = advance_mask( base_mask, base_limit ) ) {
+        printf( "base_mask: " ); print_group( base_mask );
+        uint32_t step_min_bit = get_msb( base_mask ) << 1;
+        uint32_t step_candidate_mask = ( 1 << v ) - step_min_bit;
+        for ( uint32_t step_mask = step_min_bit * ( ( 1 << step_size ) - 1 );
+              count_non_zeros( step_candidate_mask ) >= step_size;
+              step_mask = get_next_candidate( step_mask, step_candidate_mask ) ) {
+            printf( "step_candidate_mask: " ); print_group( step_candidate_mask );
+            printf( "step_mask: " ); print_group( step_mask );
             ++steps;
-            step_mask = ( ( 1 << step_size ) - 1 ) << new_min;
-            bool test = check_next_collides( found, current, step_mask, t );
-            test2 = true;
-            while ( test && test2 ) {
-                test2 = advance_mask( step_mask, v );
-                test = check_next_collides( found, current, step_mask, t );
+            if ( steps > step_limit ) {
+                printf( "HIT STEP LIMIT!\n" );
+                return -1;
             }
-            printf( "Test results: %c and %c\n", test ? 'T' : 'F', test2 ? 'T' : 'F' );
+            bool test = check_next_collides( found, base_mask, step_mask, t );
+            bool test2 = true;
+            while ( test && test2 ) {
+                printf( "checking:    " ); print_group( base_mask | step_mask );
+                test2 = advance_mask( step_mask, v );
+                test = check_next_collides( found, base_mask, step_mask, t );
+            }
+            printf( "checking:    " ); print_group( base_mask | step_mask );
             if ( !test && test2 ) {
-                found.push_back( current | step_mask );
-                printf( "Step 2 size: %d, current: 0x%0X, new mask: 0x%0X\n", step_size, current, step_mask );
-                print_group( current | step_mask );
-                test2 = false;
-            } else {
+                found.push_back( base_mask | step_mask );
+            }
+
+            if ( !test2 ) {
                 break;
             }
-        }
-        printf( "Rolling over with new_min: %d, current: 0x%0X\n", new_min, current );
+            step_candidate_mask &= ~step_mask;
+        } // Deep search
+    } // Base stepping
 
-        if ( current ) {
-            test2 = advance_mask( current , v - step_size );
-            new_min = get_msb_shift( current );
-            printf( "Advancing new_min: %d, current: 0x%0X\n", new_min, current );
-
-            if ( test2 ) {
-                step_mask = ( (1 << step_size) - 1 ) << get_msb_shift( current ) + 1;
-                bool test = check_next_collides( found, current, step_mask, t );
-                test2 = true;
-                while ( test && test2 ) {
-                    test2 = advance_mask( step_mask, v );
-                    test = check_next_collides( found, current, step_mask, t );
-                }
-                if ( !test && test2 ) {
-                    found.push_back( current | step_mask );
-                    printf( "Step 3 size: %d, current: 0x%0X, new mask: 0x%0X\n", step_size, current, step_mask );
-                    print_group( current | step_mask );
-                }
-            }
-        }
-    } while ( test2 );
 
     printf( "Completed in %d steps with %zu entries\n", steps, found.size() );
 
