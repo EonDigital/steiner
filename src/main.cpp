@@ -11,9 +11,12 @@ enum {
     PRINT_COMPARISONS = 1 << 0,
     PRINT_ADVANCE_MASK = 1 << 1,
     PRINT_NEXT_CANDIDATE = 1 << 2,
+    PRINT_BASE_MASKS = 1 << 3,
+    PRINT_STEP_MASKS = 1 << 4,
+    PRINT_CHECKS = 1 << 5,
 };
 
-uint32_t print_flags = PRINT_ADVANCE_MASK;
+uint32_t print_flags = 0;
 
 uint32_t clz( uint32_t value ) {
     return __builtin_clz( value );
@@ -180,14 +183,18 @@ int main( int argc, char ** argv ) {
     for ( uint32_t base_mask = ( 1 << base_size ) - 1;
           base_test;
           base_test = advance_mask( base_mask, base_limit ) ) {
-        printf( "base_mask: " ); print_group( base_mask );
+        if ( print_flags & PRINT_BASE_MASKS ) {
+            printf( "base_mask: " ); print_group( base_mask );
+        }
         uint32_t step_min_bit = get_msb( base_mask ) << 1;
         uint32_t step_candidate_mask = ( 1 << v ) - step_min_bit;
         for ( uint32_t step_mask = step_min_bit * ( ( 1 << step_size ) - 1 );
               count_non_zeros( step_candidate_mask ) >= step_size;
               step_mask = get_next_candidate( step_mask, step_candidate_mask ) ) {
-            printf( "step_candidate_mask: " ); print_group( step_candidate_mask );
-            printf( "step_mask: " ); print_group( step_mask );
+            if ( print_flags & PRINT_STEP_MASKS ) {
+                printf( "step_candidate_mask: " ); print_group( step_candidate_mask );
+                printf( "step_mask: " ); print_group( step_mask );
+            }
             ++steps;
             if ( steps > step_limit ) {
                 printf( "HIT STEP LIMIT!\n" );
@@ -196,11 +203,15 @@ int main( int argc, char ** argv ) {
             bool test = check_next_collides( found, base_mask, step_mask, t );
             bool test2 = true;
             while ( test && test2 ) {
-                printf( "checking:    " ); print_group( base_mask | step_mask );
+                if ( print_flags & PRINT_CHECKS ) {
+                    printf( "checking:    " ); print_group( base_mask | step_mask );
+                }
                 test2 = advance_mask( step_mask, v );
                 test = check_next_collides( found, base_mask, step_mask, t );
             }
-            printf( "checking:    " ); print_group( base_mask | step_mask );
+            if ( print_flags & PRINT_CHECKS ) {
+                printf( "checking:    " ); print_group( base_mask | step_mask );
+            }
             if ( !test && test2 ) {
                 found.push_back( base_mask | step_mask );
             }
